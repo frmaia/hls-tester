@@ -1,16 +1,22 @@
 #!/usr/bin/python
 
+from multiprocessing import Pool, Process, Queue
+from pprint import pprint
+
+import logging
 import m3u8
+import os
+import random
+import sys
+import tempfile
 import time
 
-from pprint import pprint
-import os
-import logging
 
 TMP_BASE_DIR = "/tmp"
 
 def __get_local_file_name(url):
-	return "%s/%s" % ( TMP_BASE_DIR, url.split('/')[-1])
+	#return "%s/%s" % ( TMP_BASE_DIR, url.split('/')[-1])
+	return tempfile.NamedTemporaryFile().name
 
 def download_http_resource(url):
 	'''
@@ -24,7 +30,7 @@ def download_http_resource(url):
 	file_name = __get_local_file_name(url)
 	logging.debug("DOWNLOADING '%s'" % (url))
 
-	download_start_time = time.clock()
+	download_start_time = time.time()
 
 	u = urllib2.urlopen(url)
 
@@ -43,13 +49,13 @@ def download_http_resource(url):
 		f.write(buffer)
 
 		### Print download percentage
-		status = r"%10d  [%3.2f%%]" % (file_size_dl, file_size_dl * 100. / file_size)
-		status = status + chr(8)*(len(status)+1)
-		print status,
+		#status = r"%10d  [%3.2f%%]" % (file_size_dl, file_size_dl * 100. / file_size)
+		#status = status + chr(8)*(len(status)+1)
+		#print status,
 	
 	f.close()
 
-	download_end_time = time.clock()
+	download_end_time = time.time()
 	download_time = (download_end_time - download_start_time)
 
 	#log_msg = "DOWNLOADED '%s' ; Bytes: '%s'" % (url, file_size)
@@ -102,7 +108,6 @@ class Chunk:
 			- bitrate (the real bitrate based on file size and duration)
 			- size_in_bytes (chunk file size in bytes)
 		'''
-
 		try:
 			# Download chunk to get more detailed information
 			tmp_file, self.download_time, self.response_headers = download_http_resource(self.url)
@@ -148,45 +153,83 @@ class Chunk:
 			return False
 		
 		if cache_header_param in self.response_headers.dict and cache_header_value_contains in self.response_headers.dict[cache_header_param].lower():
-			logging.info("CDN cache hit for '%s'" % self)
+			logging.info("CDN_CACHE_HIT for '%s'" % self.url)
+			logging.debug("CDN_CACHE_HIT for '%s'" % self)
 			return True
 
-		logging.info("CDN cache miss for '%s'" % self)
+		logging.info("CDN_CACHE_MISS for '%s'" % self.url)
+		logging.debug("CDN_CACHE_MISS for '%s'" % self)
 		return False
 
 
-def main(abr_stream_url):
-	print abr_stream_url
+def process_m3u8(abr_stream_url, worker):
 	logging.info("STARTING...")
-	try: 
-		#TODO put data on a multiprocessing queue for running in a distributed way
-		#TODO chunk duration time in this loop
-		while True:
-			logging.debug("Processing ABR playlist '%s'" % abr_stream_url)
-			m3u8_obj = m3u8.load(abr_stream_url)
-			for stream in m3u8_obj.playlists:
-				pl_obj = m3u8.load(stream.absolute_uri)
 
-				for segment in pl_obj.segments:
-					logging.debug("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX") # ... it's just a helper for log viewers
-					chunk = Chunk(segment.absolute_uri, segment.uri, segment.duration, stream.stream_info.bandwidth)
-					#pprint(vars(chunk))
+	#TODO chunk duration time in this loop
+	logging.debug("Processing ABR playlist '%s'" % abr_stream_url)
+	m3u8_obj = m3u8.load(abr_stream_url)
+	for stream in m3u8_obj.playlists:
+		pl_obj = m3u8.load(stream.absolute_uri)
 
-				#print pl_obj
-				#pprint(vars(m3u8_obj))
-	except KeyboardInterrupt:
-		logging.info("FINISHED by a 'KeyboardInterrupt' !")
+		for segment in pl_obj.segments:
+			#logging.debug("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX - %s" % worker.name) # ... it's just a helper for log viewers
+			logging.info("%s processing '%s'" % (worker.name,segment.absolute_uri) )# ... it's just a helper for log viewers
+			chunk = Chunk(segment.absolute_uri, segment.uri, segment.duration, stream.stream_info.bandwidth)
 
+
+class Worker(Process):
+	def __init__(self, queue, worker_name):
+		super(Worker, self).__init__()
+		self.queue = queue
+		self.name  = worker_name
+
+	def run(self):
+		logging.info("Worker '%s' is running" % self.name)
+		for data in iter( self.queue.get, None ):
+			logging.info("'%s' consuming '%s'" % (self.name, data))
+			process_m3u8(data, self)
 	
 
 if __name__ == "__main__":
 
-	logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
-	
-	#TODO: define external configurations
-	abr_stream_url = "http://url-for-your-origin-or-edge/abr-playlist.m3u8"
-	main(abr_stream_url)
+	if len(sys.argv) < 3:
+		print "Use: time python2.7 %s <number_of_workers> <abr_stream_url_1> [abr_stream_url_2] [abr_stream_url_3] [...] " % sys.argv[0]
+		sys.exit("Example: time python %s 32 'http://url-for-your-origin-or-edge/abr-playlist-1.m3u8' 'http://url-for-your-origin-or-edge/abr-playlist-2.m3u8'" % sys.argv[0])
 
+	logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+	number_of_workers = int(sys.argv[1])
+	abr_stream_url = sys.argv[2]
 	
+	urls = []
+	for i in sys.argv[2:]:
+		urls.append(i)
+	
+	request_queue = Queue()
+
+
+	number_of_stream_viewers  = number_of_workers
+	if len(urls) > number_of_workers:
+		number_of_stream_viewers = len(urls)
+
+
+	for i in range(number_of_workers):
+		worker_name = "worker_%s" % i
+		Worker( request_queue , worker_name ).start()
+
+	try:
+		while True:
+			for i in range(1,number_of_stream_viewers):
+				logging.debug("Putting '%s' data items on queue" % number_of_stream_viewers)
+				request_queue.put( random.choice(urls) )
+			time.sleep(10)
+	except KeyboardInterrupt:
+		logging.info("FINISHED by a 'KeyboardInterrupt' !")
+
+
+	# Sentinel objects to allow clean shutdown: 1 per worker.
+	for i in range(number_of_workers):
+		request_queue.put( None )
+		
 
 
