@@ -19,12 +19,6 @@ class Chunk:
 
 		self.__get_details()
 
-		#self.probe()
-
-		#if self.response_headers:
-		#	# Verify if request was cached by AWS CloudFront
-		#	self.check_cdn_cache(cache_header_param='x-cache', cache_header_value_contains='hit')
-
 	def __str__(self):
 		return str(vars(self))
 
@@ -81,23 +75,3 @@ class Chunk:
 			logging.debug("Bitrate is OK for chunk '%s'" % self)
 
 		return True
-
-	def check_cdn_cache(self, cache_header_param, cache_header_value_contains):
-		
-		if not self.response_headers:
-			logging.debug("chunk response_headers is not defined")
-			return False
-
-		#logging.debug(self.response_headers)
-		
-		if not cache_header_param or not cache_header_value_contains:
-			return False
-		
-		if cache_header_param in self.response_headers.dict and cache_header_value_contains in self.response_headers.dict[cache_header_param].lower():
-			logging.info("CDN_CACHE_HIT for '%s'" % self.url)
-			logging.debug("CDN_CACHE_HIT for '%s'" % self)
-			return True
-
-		logging.info("CDN_CACHE_MISS for '%s'" % self.url)
-		logging.debug("CDN_CACHE_MISS for '%s'" % self)
-		return False
