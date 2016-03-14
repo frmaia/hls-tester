@@ -51,11 +51,11 @@ class Worker(Process):
 		logging.info("Worker '%s' is running" % self.name)
 		for data in iter( self.job_queue.get, None ):
 			logging.info("'%s' consuming '%s'" % (self.name, data))
-			#try:		
-			self.__process_m3u8(data, self)
-			#except urllib2.HTTPError, err:
-			#	logging.error("HTTPError status code = '%s' for '%s'." % (err.code, abr_stream_url) )
-			#	return
+			try:		
+				self.__process_m3u8(data, self)
+			except urllib2.HTTPError, err:
+				logging.error("HTTPError status code = '%s' for '%s'." % (err.code, abr_stream_url) )
+				return
 
 	def __process_m3u8(self, abr_stream_url, worker):
 		logging.info("STARTING...")
@@ -104,6 +104,7 @@ class Worker(Process):
 
 
 	def __send_data_to_manager(self, bool_cache_hit, bool_download_ok, bool_bitrate_ok):
+		logging.info("XXX - __send_data_to_manager")
 		analytics_data = {'cache_hit': bool_cache_hit, 'download_ok': bool_download_ok, 'bitrate_ok': bool_bitrate_ok}
 		self.analytics_queue.put(analytics_data)
 

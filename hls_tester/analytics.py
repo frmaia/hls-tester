@@ -1,4 +1,5 @@
 from multiprocessing import Pool, Process, Queue
+import logging
 
 class AnalyticsManager(Process):
 	def __init__(self, analytics_queue, process_name):
